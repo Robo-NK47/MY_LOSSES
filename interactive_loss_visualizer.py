@@ -1,23 +1,69 @@
 """
-Interactive Loss Functions Visualizer using Dash
-Free and open-source framework by Plotly!
+Interactive Loss Functions Visualizer
+A Streamlit app for exploring loss functions interactively
 """
 
-from dash import Dash, dcc, html, Input, Output
-import dash_bootstrap_components as dbc
+import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
+from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
+# Page configuration
+st.set_page_config(
+    page_title="Loss Functions Visualizer",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .loss-card {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+        border-left: 4px solid #1f77b4;
+    }
+    .formula-box {
+        background-color: #ffffff;
+        padding: 1rem;
+        border-radius: 5px;
+        border: 2px solid #1f77b4;
+        font-family: 'Courier New', monospace;
+        font-size: 1.1rem;
+        margin: 1rem 0;
+    }
+    .info-section {
+        background-color: #e8f4f8;
+        padding: 1rem;
+        border-radius: 5px;
+        margin: 1rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Load data
+@st.cache_data
 def load_loss_functions():
     """Load loss functions data from Excel"""
     try:
         df = pd.read_excel('loss_functions_table.xlsx')
         return df
     except FileNotFoundError:
+        st.error("Error: loss_functions_table.xlsx not found!")
         return None
 
 # Dictionary for "what it does" information
@@ -120,6 +166,72 @@ WHEN_TO_USE = {
     'WGAN': 'Use for Wasserstein GANs. Provides more stable training than standard GAN loss.'
 }
 
+def convert_formula_to_latex(formula):
+    """Convert formula text to LaTeX format for mathematical rendering"""
+    if pd.isna(formula) or formula == 'N/A':
+        return 'N/A'
+    
+    formula = str(formula)
+    
+    # Fix encoding issues first
+    replacements = {
+        'Î£': 'Σ', 'Î´': 'δ', 'Î±': 'α', 'Î²': 'β', 'Î³': 'γ',
+        'Â²': '²', 'âˆ©': '∩', 'âˆª': '∪', 'âˆš': '√',
+    }
+    for old, new in replacements.items():
+        formula = formula.replace(old, new)
+    
+    # Convert to LaTeX format using matplotlib's mathtext
+    import re
+    
+    # Handle superscripts
+    formula = formula.replace('²', '^2')
+    
+    # Convert Greek letters BEFORE other conversions to avoid conflicts
+    formula = re.sub(r'α([A-Z])', r'\\alpha \1', formula)
+    formula = re.sub(r'α', r'\\alpha', formula)
+    formula = re.sub(r'β([A-Z])', r'\\beta \1', formula)
+    formula = re.sub(r'β', r'\\beta', formula)
+    formula = re.sub(r'γ([A-Z])', r'\\gamma \1', formula)
+    formula = re.sub(r'γ', r'\\gamma', formula)
+    formula = re.sub(r'δ([A-Z])', r'\\delta \1', formula)
+    formula = re.sub(r'δ', r'\\delta', formula)
+    formula = re.sub(r'Δ([A-Z])', r'\\Delta \1', formula)
+    formula = re.sub(r'Δ', r'\\Delta', formula)
+    
+    # Convert sqrt with parentheses to curly braces: sqrt(...) -> \sqrt{...}
+    formula = re.sub(r'sqrt\s*\(([^)]+)\)', r'\\sqrt{\1}', formula)
+    formula = re.sub(r'√\s*\(([^)]+)\)', r'\\sqrt{\1}', formula)
+    formula = re.sub(r'√\s*([^\s\)]+)', r'\\sqrt{\1}', formula)
+    
+    # Convert summation notation: Σ -> \sum (only standalone Σ symbol, not in words)
+    formula = re.sub(r'(\d+)/n\s*Σ', r'\1/n \\sum', formula)
+    formula = re.sub(r'\s+Σ\s+', r' \\sum ', formula)
+    formula = re.sub(r'Σ\s*\(', r'\\sum(', formula)
+    formula = re.sub(r'Σ([^A-Za-z])', r'\\sum\1', formula)
+    
+    # Convert common functions (log, exp, max, min, cosh)
+    formula = re.sub(r'\blog\s*\(', r'\\log(', formula)
+    formula = re.sub(r'\bexp\s*\(', r'\\exp(', formula)
+    formula = re.sub(r'\bmax\s*\(', r'\\max(', formula)
+    formula = re.sub(r'\bmin\s*\(', r'\\min(', formula)
+    formula = re.sub(r'\bcosh\s*\(', r'\\cosh(', formula)
+    
+    # Handle subscripts: y_pred -> y_{pred}, y_true -> y_{true}
+    formula = re.sub(r'y_pred', r'y_{pred}', formula)
+    formula = re.sub(r'y_true', r'y_{true}', formula)
+    
+    # Handle fractions: 1/n -> \frac{1}{n}
+    formula = re.sub(r'(\d+)/n', r'\\frac{\1}{n}', formula)
+    
+    # Handle parentheses with expressions: (y_pred - y_true)^2
+    formula = re.sub(r'\(y_{pred}\s*-\s*y_{true}\)\^?2', r'(y_{pred} - y_{true})^2', formula)
+    
+    # Clean up spaces
+    formula = formula.replace('  ', ' ').strip()
+    
+    return formula
+
 def get_info(loss_name, info_dict):
     """Get information from dictionary with fallback"""
     loss_name_lower = loss_name.lower()
@@ -131,109 +243,45 @@ def get_info(loss_name, info_dict):
         return matches[0][1]
     return 'N/A'
 
-def convert_formula_to_latex(formula):
-    """Convert formula text to LaTeX format with proper math delimiters"""
-    if pd.isna(formula) or formula == 'N/A':
-        return 'N/A'
+def create_visualization(row, loss_name):
+    """Create interactive visualization for selected loss function using Plotly"""
+    use_case = str(row['what it is used for']) if pd.notna(row['what it is used for']) else 'Unknown'
     
-    formula = str(formula)
-    import re
-    
-    # Fix encoding issues
-    replacements = {
-        'Î£': 'Σ', 'Î´': 'δ', 'Î±': 'α', 'Î²': 'β', 'Î³': 'γ',
-        'Â²': '²', 'âˆ©': '∩', 'âˆª': '∪', 'âˆš': '√',
-    }
-    for old, new in replacements.items():
-        formula = formula.replace(old, new)
-    
-    # Convert Greek letters to LaTeX
-    formula = re.sub(r'α([A-Z])', r'\\alpha \1', formula)
-    formula = re.sub(r'α', r'\\alpha', formula)
-    formula = re.sub(r'β([A-Z])', r'\\beta \1', formula)
-    formula = re.sub(r'β', r'\\beta', formula)
-    formula = re.sub(r'γ([A-Z])', r'\\gamma \1', formula)
-    formula = re.sub(r'γ', r'\\gamma', formula)
-    formula = re.sub(r'δ([A-Z])', r'\\delta \1', formula)
-    formula = re.sub(r'δ', r'\\delta', formula)
-    formula = re.sub(r'Δ([A-Z])', r'\\Delta \1', formula)
-    formula = re.sub(r'Δ', r'\\Delta', formula)
-    formula = re.sub(r'Σ', r'\\sum', formula)
-    
-    # Convert superscripts (², ³, etc.)
-    formula = re.sub(r'²', r'^2', formula)
-    formula = re.sub(r'³', r'^3', formula)
-    
-    # Convert square roots
-    formula = re.sub(r'sqrt\s*\(([^)]+)\)', r'\\sqrt{\1}', formula)
-    formula = re.sub(r'√\s*\(([^)]+)\)', r'\\sqrt{\1}', formula)
-    formula = re.sub(r'√([^\s\(\)]+)', r'\\sqrt{\1}', formula)
-    
-    # Convert fractions (handle both a/b and (a)/(b) formats)
-    formula = re.sub(r'\(([^)]+)\)\s*/\s*\(([^)]+)\)', r'\\frac{\1}{\2}', formula)
-    formula = re.sub(r'(\d+|[a-zA-Z_]+)\s*/\s*(\d+|[a-zA-Z_]+)', r'\\frac{\1}{\2}', formula)
-    
-    # Convert common functions
-    formula = re.sub(r'\blog\s*\(', r'\\log(', formula)
-    formula = re.sub(r'\bexp\s*\(', r'\\exp(', formula)
-    formula = re.sub(r'\bmax\s*\(', r'\\max(', formula)
-    formula = re.sub(r'\bmin\s*\(', r'\\min(', formula)
-    formula = re.sub(r'\bsin\s*\(', r'\\sin(', formula)
-    formula = re.sub(r'\bcos\s*\(', r'\\cos(', formula)
-    formula = re.sub(r'\btan\s*\(', r'\\tan(', formula)
-    formula = re.sub(r'\bln\s*\(', r'\\ln(', formula)
-    
-    # Convert subscripts and superscripts for variables
-    formula = re.sub(r'y_pred', r'y_{pred}', formula)
-    formula = re.sub(r'y_true', r'y_{true}', formula)
-    formula = re.sub(r'y_(\w+)', r'y_{\1}', formula)
-    
-    # Convert sum notation with proper limits
-    formula = re.sub(r'\\sum\s*\(([^)]+)\)', r'\\sum \1', formula)
-    formula = re.sub(r'\\sum\s+([a-z])\s*=\s*1\s+to\s+n', r'\\sum_{\1=1}^{n}', formula, flags=re.IGNORECASE)
-    
-    # Convert multiplication signs
-    formula = formula.replace('×', r' \times ')
-    formula = formula.replace('·', r' \cdot ')
-    
-    # Convert set operations
-    formula = formula.replace('∩', r' \cap ')
-    formula = formula.replace('∪', r' \cup ')
-    
-    # Clean up spacing
-    formula = re.sub(r'\s+', ' ', formula)
-    formula = formula.strip()
-    
-    # Wrap in display math delimiters for proper rendering
-    return f'$${formula}$$'
-
-def create_visualization(loss_name, use_case):
-    """Create interactive visualization"""
+    # Color palette
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
     color = colors[hash(loss_name) % len(colors)]
     
+    # Regression losses
     if 'Regression' in use_case:
         error = np.linspace(-5, 5, 1000)
         y_true = 0
         
         if 'MSE' in loss_name and 'RMSE' not in loss_name:
             loss_values = (error - y_true) ** 2
+            x_label = 'Error (Predicted - True)'
         elif 'MAE' in loss_name:
             loss_values = np.abs(error - y_true)
+            x_label = 'Error (Predicted - True)'
         elif 'RMSE' in loss_name:
             loss_values = np.sqrt((error - y_true) ** 2)
+            x_label = 'Error (Predicted - True)'
         elif 'Huber' in loss_name:
             delta = 1.0
             abs_error = np.abs(error - y_true)
-            loss_values = np.where(abs_error <= delta, 0.5 * abs_error ** 2, delta * (abs_error - 0.5 * delta))
+            loss_values = np.where(abs_error <= delta,
+                                  0.5 * abs_error ** 2,
+                                  delta * (abs_error - 0.5 * delta))
+            x_label = 'Error (Predicted - True)'
         elif 'Log-Cosh' in loss_name:
             loss_values = np.log(np.cosh(error - y_true))
+            x_label = 'Error (Predicted - True)'
         else:
             loss_values = (error - y_true) ** 2
+            x_label = 'Error (Predicted - True)'
         
         x_data = error
-        x_label = 'Error (Predicted - True)'
         
+    # Classification losses
     elif 'Classification' in use_case or 'Binary' in use_case:
         p = np.linspace(0.001, 0.999, 1000)
         
@@ -263,7 +311,8 @@ def create_visualization(loss_name, use_case):
             loss_values = -np.log(p)
             x_label = 'Predicted Probability'
             x_data = p
-            
+        
+    # Segmentation losses
     elif 'Segmentation' in use_case:
         overlap = np.linspace(0.01, 0.99, 1000)
         
@@ -285,6 +334,7 @@ def create_visualization(loss_name, use_case):
         x_label = 'Overlap Ratio'
         x_data = overlap
         
+    # Metric learning losses
     elif 'Metric learning' in use_case:
         if 'Triplet' in loss_name:
             margin = 1.0
@@ -303,12 +353,18 @@ def create_visualization(loss_name, use_case):
             loss_values = np.maximum(0, distance_diff + 1.0)
             x_label = 'Distance Difference'
             x_data = distance_diff
+        
     else:
+        # Default
         x = np.linspace(-3, 3, 1000)
         loss_values = x ** 2
         x_label = 'Input'
         x_data = x
     
+    # Create interactive Plotly figure
+    fig = go.Figure()
+    
+    # Convert hex color to rgba for fill
     def hex_to_rgba(hex_color, alpha=0.2):
         hex_color = hex_color.lstrip('#')
         r = int(hex_color[0:2], 16)
@@ -316,8 +372,7 @@ def create_visualization(loss_name, use_case):
         b = int(hex_color[4:6], 16)
         return f'rgba({r}, {g}, {b}, {alpha})'
     
-    fig = go.Figure()
-    
+    # Add filled area
     fig.add_trace(go.Scatter(
         x=x_data,
         y=loss_values,
@@ -326,246 +381,155 @@ def create_visualization(loss_name, use_case):
         name=loss_name,
         line=dict(color=color, width=3),
         fillcolor=hex_to_rgba(color, 0.2),
-        hovertemplate=f'<b>{loss_name}</b><br>{x_label}: %{{x:.4f}}<br>Loss: %{{y:.4f}}<extra></extra>',
+        hovertemplate='<b>%{fullData.name}</b><br>' +
+                      f'{x_label}: %{{x:.4f}}<br>' +
+                      'Loss: %{y:.4f}<extra></extra>',
     ))
     
+    # Add main line
+    fig.add_trace(go.Scatter(
+        x=x_data,
+        y=loss_values,
+        mode='lines',
+        name=loss_name,
+        line=dict(color=color, width=3),
+        hovertemplate='<b>%{fullData.name}</b><br>' +
+                      f'{x_label}: %{{x:.4f}}<br>' +
+                      'Loss: %{y:.4f}<extra></extra>',
+        showlegend=False
+    ))
+    
+    # Add margin line for Triplet Loss
     if 'Triplet' in loss_name:
         margin = 1.0
-        fig.add_vline(x=-margin, line_dash="dash", line_color="red", annotation_text="Margin")
+        fig.add_vline(
+            x=-margin,
+            line_dash="dash",
+            line_color="red",
+            annotation_text="Margin boundary",
+            annotation_position="top"
+        )
     
+    # Update layout
     fig.update_layout(
-        title=f'{loss_name} Loss Function',
+        title={
+            'text': f'{loss_name} Loss Function',
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 20, 'color': '#2C3E50'}
+        },
         xaxis_title=x_label,
         yaxis_title='Loss',
         hovermode='x unified',
         template='plotly_white',
         height=500,
-        autosize=False,
         showlegend=True,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        ),
         font=dict(size=12),
         plot_bgcolor='white',
         paper_bgcolor='#FAFAFA'
     )
     
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+    # Add grid
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', zeroline=False)
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', zeroline=False)
     
     return fig
 
-# Load data
-df = load_loss_functions()
-if df is None:
-    print("Error: Could not load loss_functions_table.xlsx")
-    exit(1)
-
-# Group loss functions by usage type
-def get_usage_types_and_grouped_losses(df):
-    """Group loss functions by their usage type"""
-    usage_groups = {}
+# Main app
+def main():
+    # Header
+    st.markdown('<div class="main-header">📊 Interactive Loss Functions Visualizer</div>', unsafe_allow_html=True)
     
-    for _, row in df.iterrows():
-        loss_name = row['name of loss function']
-        use_case = str(row['what it is used for']) if pd.notna(row['what it is used for']) else 'Other'
+    # Load data
+    df = load_loss_functions()
+    if df is None:
+        return
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("⚙️ Settings")
         
-        # Extract main usage type (first word or key phrase)
-        if 'Regression' in use_case:
-            usage_type = 'Regression'
-        elif 'Classification' in use_case or 'Binary' in use_case:
-            usage_type = 'Classification'
-        elif 'Segmentation' in use_case:
-            usage_type = 'Segmentation'
-        elif 'Metric learning' in use_case or 'Metric Learning' in use_case:
-            usage_type = 'Metric Learning'
-        elif 'Object detection' in use_case or 'Object Detection' in use_case:
-            usage_type = 'Object Detection'
-        elif 'GAN' in use_case or 'Generative' in use_case:
-            usage_type = 'Generative Models'
-        elif 'Sequence' in use_case or 'CTC' in use_case:
-            usage_type = 'Sequence Learning'
-        else:
-            usage_type = 'Other'
-        
-        if usage_type not in usage_groups:
-            usage_groups[usage_type] = []
-        usage_groups[usage_type].append(loss_name)
-    
-    # Sort usage types and loss functions within each group
-    sorted_usage_types = sorted(usage_groups.keys())
-    for usage_type in sorted_usage_types:
-        usage_groups[usage_type].sort()
-    
-    return sorted_usage_types, usage_groups
-
-usage_types, usage_groups = get_usage_types_and_grouped_losses(df)
-loss_names = df['name of loss function'].tolist()
-
-# Initialize Dash app with Bootstrap theme
-app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-app.title = "Loss Functions Visualizer"
-
-# Add MathJax for LaTeX rendering
-app.index_string = '''
-<!DOCTYPE html>
-<html>
-    <head>
-        {%metas%}
-        <title>{%title%}</title>
-        {%favicon%}
-        {%css%}
-        <script>
-            window.MathJax = {
-                tex: {
-                    inlineMath: [['$','$'], ['\\\\(','\\\\)']],
-                    displayMath: [['$$','$$'], ['\\\\[','\\\\]']],
-                    processEscapes: true,
-                    processEnvironments: true
-                },
-                options: {
-                    skipHtmlTags: ['script', 'style', 'noscript', 'textarea', 'pre']
-                }
-            };
-        </script>
-        <script type="text/javascript" id="MathJax-script" async
-            src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
-        </script>
-    </head>
-    <body>
-        {%app_entry%}
-        <footer>
-            {%config%}
-            {%scripts%}
-            {%renderer%}
-        </footer>
-    </body>
-</html>
-'''
-
-# Define the layout
-app.layout = dbc.Container([
-    dbc.Row([
-        dbc.Col([
-            html.H1("📊 Interactive Loss Functions Visualizer", className="text-center mb-4"),
-            html.P("Explore different loss functions used in machine learning with interactive visualizations!", 
-                   className="text-center text-muted mb-4"),
-        ], width=12)
-    ]),
-    
-    dbc.Row([
-        dbc.Col([
-            html.Label("Select Usage Type", className="fw-bold mb-2"),
-            dcc.Dropdown(
-                id='usage-type-dropdown',
-                options=[{'label': ut, 'value': ut} for ut in usage_types],
-                value=usage_types[0] if usage_types else None,
-                clearable=False,
-                className="mb-3"
-            ),
-            html.Label("Select Loss Function", className="fw-bold mb-2"),
-            dcc.Dropdown(
-                id='loss-dropdown',
-                options=[{'label': name, 'value': name} for name in usage_groups.get(usage_types[0], [])],
-                value=usage_groups.get(usage_types[0], [loss_names[0]])[0] if usage_types else loss_names[0],
-                clearable=False,
-                className="mb-3"
-            ),
-            html.Div(
-                dcc.Graph(id='loss-plot', config={'displayModeBar': True}, responsive=False),
-                style={'height': '500px', 'overflow': 'hidden'}
-            )
-        ], width=8),
-        
-        dbc.Col([
-            html.H3("📋 Information", className="mb-3"),
-            
-            html.H5("📐 Formula", className="mt-3"),
-            html.Div(id='formula-display', className="mb-3 p-3 bg-light rounded", style={'textAlign': 'center'}),
-            
-            html.H5("⚙️ What it does", className="mt-3"),
-            dbc.Alert(id='what-it-does', color="info", className="mb-3"),
-            
-            html.H5("🎯 Used for", className="mt-3"),
-            dbc.Alert(id='use-case', color="info", className="mb-3"),
-            
-            html.H5("💡 When to use", className="mt-3"),
-            dbc.Alert(id='when-to-use', color="info", className="mb-3"),
-        ], width=4)
-    ]),
-    
-    dbc.Row([
-        dbc.Col([
-            html.Hr(),
-            html.H4("💡 Tips", className="mt-3"),
-            html.Ul([
-                html.Li("Hover over the graph to see exact values"),
-                html.Li("Zoom and pan to explore different regions"),
-                html.Li("Download the graph using the toolbar"),
-                html.Li("Share this tool with your network! 🚀")
-            ])
-        ], width=12)
-    ])
-], fluid=True, className="mt-4")
-
-# Callback to update loss function dropdown when usage type changes
-@app.callback(
-    [Output('loss-dropdown', 'options'),
-     Output('loss-dropdown', 'value')],
-    [Input('usage-type-dropdown', 'value')]
-)
-def update_loss_dropdown(usage_type):
-    """Update loss function dropdown options based on selected usage type"""
-    if usage_type is None:
-        usage_type = usage_types[0] if usage_types else None
-    
-    if usage_type and usage_type in usage_groups:
-        loss_options = [{'label': name, 'value': name} for name in usage_groups[usage_type]]
-        default_value = usage_groups[usage_type][0]
-    else:
-        loss_options = [{'label': name, 'value': name} for name in loss_names]
-        default_value = loss_names[0]
-    
-    return loss_options, default_value
-
-# Callback to update all components when loss function changes
-@app.callback(
-    [Output('loss-plot', 'figure'),
-     Output('formula-display', 'children'),
-     Output('what-it-does', 'children'),
-     Output('use-case', 'children'),
-     Output('when-to-use', 'children')],
-    [Input('loss-dropdown', 'value')]
-)
-def update_visualization(loss_name):
-    """Update visualization and info when loss function changes"""
-    if loss_name is None:
-        loss_name = loss_names[0]
-    
-    selected_row = df[df['name of loss function'] == loss_name].iloc[0]
-    formula = str(selected_row['formula of loss function']) if pd.notna(selected_row['formula of loss function']) else 'N/A'
-    use_case = str(selected_row['what it is used for']) if pd.notna(selected_row['what it is used for']) else 'Unknown'
-    
-    what_it_does = get_info(loss_name, WHAT_IT_DOES)
-    when_to_use = get_info(loss_name, WHEN_TO_USE)
-    
-    formula_latex = convert_formula_to_latex(formula)
-    
-    fig = create_visualization(loss_name, use_case)
-    
-    # Format formula for display using Markdown which supports LaTeX
-    if formula_latex != 'N/A':
-        # dcc.Markdown supports LaTeX math rendering
-        formula_html = dcc.Markdown(
-            formula_latex,
-            mathjax=True,
-            style={'textAlign': 'center'}
+        # Loss function selector
+        loss_names = df['name of loss function'].tolist()
+        selected_loss = st.selectbox(
+            "Select Loss Function:",
+            loss_names,
+            index=0
         )
-    else:
-        formula_html = html.Div('N/A', className="text-muted")
+        
+        st.markdown("---")
+        st.markdown("### 📚 About")
+        st.markdown("""
+        Explore different loss functions used in machine learning:
+        - **Visualize** the loss function curve
+        - **Understand** what it does to inputs
+        - **Learn** when to use it
+        - **See** the mathematical formula
+        """)
     
-    return fig, formula_html, what_it_does, use_case, when_to_use
+    # Main content
+    selected_row = df[df['name of loss function'] == selected_loss].iloc[0]
+    
+    # Get information
+    formula = str(selected_row['formula of loss function']) if pd.notna(selected_row['formula of loss function']) else 'N/A'
+    use_case = str(selected_row['what it is used for']) if pd.notna(selected_row['what it is used for']) else 'N/A'
+    what_it_does = get_info(selected_loss, WHAT_IT_DOES)
+    when_to_use = get_info(selected_loss, WHEN_TO_USE)
+    
+    # Create two columns
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown(f"### {selected_loss}")
+        
+        # Interactive Visualization with Plotly
+        fig = create_visualization(selected_row, selected_loss)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("### 📋 Information")
+        
+        # Formula with LaTeX rendering
+        st.markdown("#### 📐 Formula")
+        
+        # Convert formula to LaTeX format
+        formula_latex = convert_formula_to_latex(formula)
+        
+        # Display with LaTeX rendering
+        if formula_latex and formula_latex != 'N/A':
+            # Remove $ signs for st.latex (it adds them automatically)
+            formula_clean = formula_latex.replace('$', '').strip()
+            st.latex(formula_clean)
+        else:
+            st.markdown(f'<div class="formula-box">{formula}</div>', unsafe_allow_html=True)
+        
+        # What it does
+        st.markdown("#### ⚙️ What it does")
+        st.markdown(f'<div class="info-section">{what_it_does}</div>', unsafe_allow_html=True)
+        
+        # Used for
+        st.markdown("#### 🎯 Used for")
+        st.markdown(f'<div class="info-section">{use_case}</div>', unsafe_allow_html=True)
+        
+        # When to use
+        st.markdown("#### 💡 When to use")
+        st.markdown(f'<div class="info-section">{when_to_use}</div>', unsafe_allow_html=True)
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center; color: #666; padding: 2rem;'>
+        <p>Share this interactive tool with your network! 🚀</p>
+        <p><small>Built with Streamlit | Perfect for LinkedIn sharing</small></p>
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == '__main__':
-    import os
-    # Use debug mode only in development
-    debug_mode = os.environ.get('DEBUG', 'False').lower() == 'true'
-    app.run(debug=debug_mode, host='0.0.0.0', port=int(os.environ.get('PORT', 8050)))
+    main()
 

@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: loss-functions-visualizer
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python my_losses.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+
